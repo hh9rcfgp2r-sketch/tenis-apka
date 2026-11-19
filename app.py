@@ -42,7 +42,7 @@ def nacitaj_databazu(kategoria):
         "loser_name", "loser_ioc", "loser_rank", "score"
     )
     dfs = list()
-    baza = "https://githubusercontent.com_"
+    baza = "https://raw.githubusercontent." + "com/JeffSackmann/tennis_"
     for rok in roky:
         url = f"{baza}{prefix}/master/{prefix}_matches_{rok}.csv"
         try:
