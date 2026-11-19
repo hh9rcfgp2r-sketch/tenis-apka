@@ -44,7 +44,8 @@ def nacitaj_databazu(kategoria):
     dfs = list()
     baza = "https://raw.githubusercontent." + "com/Aneeshers/tennis-sackmann-archive/main/"
     for rok in roky:
-        url = f"{baza}tennis_{prefix}/{prefix}_matches_{rok}.csv"
+        url = f"{baza}{prefix}/{prefix}_matches_{rok}.csv"
+
         try:
             df_rok = pd.read_csv(url, usecols=lambda c: c in stlpce, low_memory=False)
             dfs.append(df_rok)
