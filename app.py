@@ -35,21 +35,22 @@ okruh = st.radio("Kategória:", ("ATP (Muži)", "WTA (Ženy)"), horizontal=True)
 @st.cache_data(ttl=86400)
 def nacitaj_databazu(kategoria):
     prefix = "atp" if "ATP" in kategoria else "wta"
-    roky = (2023, 2024, 2025, 2026)
+    roky = (2024, 2025, 2026)
     stlpce = (
         "tourney_date", "tourney_name", "surface", "tourney_level",
         "winner_name", "winner_ioc", "winner_rank",
         "loser_name", "loser_ioc", "loser_rank", "score"
     )
     dfs = list()
-    baza = "https://raw.githubusercontent." + "com/JeffSackmann/tennis_"
+    baza = "https://raw.githubusercontent." + "com/Aneeshers/tennis-sackmann-archive/main/"
     for rok in roky:
-        url = f"{baza}{prefix}/master/{prefix}_matches_{rok}.csv"
+        url = f"{baza}tennis_{prefix}/{prefix}_matches_{rok}.csv"
         try:
-            df_rok = pd.read_csv(url, usecols=lambda c: c in stlpce)
+            df_rok = pd.read_csv(url, usecols=lambda c: c in stlpce, low_memory=False)
             dfs.append(df_rok)
         except Exception:
             pass
+
 
     if not dfs:
         return pd.DataFrame(), list(), dict(), dict(), dict()
