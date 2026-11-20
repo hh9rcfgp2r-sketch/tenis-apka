@@ -7,18 +7,17 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Tenis Pro Live 2026", page_icon="🎾", layout="centered")
 
 st.title("🎾 Tenis Pro Live 2026")
-st.caption("Živý 7-pilierový analytický model (ATP & WTA)")
+st.caption("Živý 7-pilierový model (ATP & WTA)")
 
 okruh = st.radio("Vyber kategóriu:", ("ATP (Muži)", "WTA (Ženy)"), horizontal=True)
 
 @st.cache_data(ttl=900)
-def nacitaj_kompletnu_databazu(kategoria):
+def nacitaj_databazu(kategoria):
     tour = "atp" if "ATP" in kategoria else "wta"
     zaznamy = list()
     dnesne_zapasy = list()
     posledny_rank = dict()
 
-    # 1. Načítanie širokej databázy tisícok hráčov (ATP/WTA + Challengers)
     arch_base = "https://raw.githubusercontent." + "com/Aneeshers/tennis-sackmann-archive/main/"
     arch_subory = (
         f"{arch_base}{tour}/{tour}_matches_2023.csv",
@@ -44,24 +43,11 @@ def nacitaj_kompletnu_databazu(kategoria):
         except Exception:
             pass
 
-    # 2. Živá databáza sezóny 2025 & 2026 + prebiehajúce turnaje (TennisMyLife)
     tml_base = "https://stats.tennismylife." + "org"
-    tml_subory = list()
     if tour == "atp":
-        tml_subory = [
-            f"{tml_base}/data/2025.csv",
-            f"{tml_base}/data/2026.csv",
-            f"{tml_base}/data/challenger_2025.csv",
-            f"{tml_base}/data/challenger_2026.csv",
-            f"{tml_base}/data/ongoing_tourneys.csv"
-        ]
+        tml_subory = [f"{tml_base}/data/2025.csv", f"{tml_base}/data/2026.csv", f"{tml_base}/data/challenger_2025.csv", f"{tml_base}/data/challenger_2026.csv", f"{tml_base}/data/ongoing_tourneys.csv"]
     else:
-        tml_subory = [
-            f"{tml_base}/data/wta_2025.csv",
-            f"{tml_base}/data/wta_2026.csv",
-            f"{tml_base}/data/wta_challenger_2026.csv",
-            f"{tml_base}/data/wta_ongoing_tourneys.csv"
-        ]
+        tml_subory = [f"{tml_base}/data/wta_2025.csv", f"{tml_base}/data/wta_2026.csv", f"{tml_base}/data/wta_challenger_2026.csv", f"{tml_base}/data/wta_ongoing_tourneys.csv"]
 
     for url in tml_subory:
         try:
@@ -81,7 +67,6 @@ def nacitaj_kompletnu_databazu(kategoria):
         except Exception:
             pass
 
-    # 3. Živý minútový feed z ESPN (aktuálny rebríček + posledné dni + dnešné zápasy)
     espn_base = "https://api.espn." + f"com/apis/site/v2/sports/tennis/{tour}"
     try:
         rk_resp = requests.get(f"{espn_base}/rankings", timeout=8).json()
@@ -127,7 +112,6 @@ def nacitaj_kompletnu_databazu(kategoria):
         return pd.DataFrame(), list(), dict(), dict(), dnesne_zapasy
 
     df = df.drop_duplicates(subset=["datum", "winner", "loser"]).sort_values("datum").reset_index(drop=True)
-
     elo_surf = {"Hard": dict(), "Clay": dict(), "Grass": dict()}
     for _, r in df.iterrows():
         w, l, s = r["winner"], r["loser"], r["surface"]
@@ -146,16 +130,14 @@ def nacitaj_kompletnu_databazu(kategoria):
     return df, vsetci_hraci, elo_surf, posledny_rank, dnesne_zapasy
 
 with st.spinner("Načítavam tisíce hráčov a živé dáta 2026..."):
-    df, hraci, elo_surf, posledny_rank, dnesne_zapasy = nacitaj_kompletnu_databazu(okruh)
+    df, hraci, elo_surf, posledny_rank, dnesne_zapasy = nacitaj_databazu(okruh)
 
 if df.empty:
     st.error("Nepodarilo sa načítať databázu. Skúste obnoviť stránku.")
     st.stop()
 
-najnovsi_datum = str(df["datum"].max())
-st.success(f"🟢 Databáza: **{len(hraci)}** hráčov/hráčok | Najnovšie dáta: **{najnovsi_datum[:4]}-{najnovsi_datum[4:6]}-{najnovsi_datum[6:]}**")
+st.success(f"🟢 Databáza: **{len(hraci)}** hráčov/hráčok | Dnešných zápasov: **{len(dnesne_zapasy)}**")
 
-# RÝCHLY VÝBER DNEŠNÉHO ZÁPASU
 i1 = hraci.index("Carlos Alcaraz") if "Carlos Alcaraz" in hraci else 0
 i2 = hraci.index("Flavio Cobolli") if "Flavio Cobolli" in hraci else (1 if len(hraci) > 1 else 0)
 
@@ -173,26 +155,21 @@ with col1:
 with col2:
     h2 = st.selectbox("Hráč / Hráčka 2", hraci, index=i2)
 
-col_p, col_t = st.columns(2)
+col_p, col_t, col_d = st.columns(3)
 with col_p:
     povrch = st.selectbox("Povrch:", ("Hard", "Clay", "Grass"))
 with col_t:
-    typ_turnaja = st.selectbox("Úroveň turnaja:", ("Grand Slam / Masters / Finals", "ATP/WTA 250-500", "Challenger / ITF"))
-
-with st.expander("⚙️ Doplnkové podmienky (Domáci, Únava, Zdravie/Cyklus)"):
-    domaci = st.radio("Kto hrá v domácom prostredí?", ("Nikto", h1, h2), horizontal=True)
-    unava_h1 = st.slider(f"Únava / Zdravotný hendikep: {h1}", 0, 10, 2)
-    unava_h2 = st.slider(f"Únava / Zdravotný hendikep: {h2}", 0, 10, 2)
+    typ_turnaja = st.selectbox("Turnaj:", ("Grand Slam / Masters / Finals", "ATP/WTA 250-500", "Challenger / ITF"))
+with col_d:
+    domaci = st.selectbox("Domáci hráč:", ("Nikto", h1, h2))
 
 if h1 == h2:
     st.warning("Vyberte dvoch rôznych súperov.")
     st.stop()
 
-# 1. Surface Elo (25 %)
 e1, e2 = elo_surf[povrch].get(h1, 1500), elo_surf[povrch].get(h2, 1500)
 p_elo1 = 1 / (1 + 10 ** ((e2 - e1) / 400))
 
-# 2. Forma z posledných 20 zápasov (20 %)
 z1 = df[(df["winner"] == h1) | (df["loser"] == h1)].tail(20)
 z2 = df[(df["winner"] == h2) | (df["loser"] == h2)].tail(20)
 
@@ -212,7 +189,6 @@ f1, hist1 = skore_formy(z1, h1)
 f2, hist2 = skore_formy(z2, h2)
 p_forma1 = f1 / (f1 + f2) if (f1 + f2) > 0 else 0.5
 
-# 3. Vzájomné zápasy H2H + Spoloční súperi z posledných 20 zápasov (15 %)
 h2h = df[((df["winner"] == h1) & (df["loser"] == h2)) | ((df["winner"] == h2) & (df["loser"] == h1))]
 w_h2h_1, w_h2h_2 = len(h2h[h2h["winner"] == h1]), len(h2h[h2h["winner"] == h2])
 
@@ -221,10 +197,29 @@ spol1 = sum(len(z1[(z1["winner"] == h1) & (z1["loser"] == s)]) for s in spolocni
 spol2 = sum(len(z2[(z2["winner"] == h2) & (z2["loser"] == s)]) for s in spolocni)
 p_h2h1 = (w_h2h_1 * 1.5 + spol1 + 1) / (w_h2h_1 * 1.5 + spol1 + w_h2h_2 * 1.5 + spol2 + 2)
 
-# 4. Únavnosť (15 %)
-p_unava1 = (11 - unava_h1) / ((11 - unava_h1) + (11 - unava_h2))
+limit_7dni = (datetime.utcnow() - timedelta(days=7)).strftime("%Y%m%d")
+unava1 = len(z1[z1["datum"] >= limit_7dni])
+unava2 = len(z2[z2["datum"] >= limit_7dni])
+p_unava1 = (10 - min(8, unava1)) / ((10 - min(8, unava1)) + (10 - min(8, unava2)))
 
-# 5. Finančná a rebríčková motivácia (10 %)
+r1, r2 = posledny_rank.get(h1, 250), posledny_rank.get(h2, 250)
+def motivacia(rk, hist, trn):
+    m = 1.0 + (0.35 if rk > 100 else 0) + (0.25 if hist[-3:].count("P") >= 2 else 0) - (0.20 if rk <= 15 and trn != "Grand Slam / Masters / Finals" else 0)
+    return max(0.3, m)
+
+m1, m2 = motivacia(r1, hist1, typ_turnaja), motivacia(r2, hist2, typ_turnaja)
+p_mot1 = m1 / (m1 + m2)
+p_dom1 = 0.65 if domaci == h1 else (0.35 if domaci == h2 else 0.50)
+
+def analyza_vykyvov(zapasy, meno, je_wta):
+    skrece, neobvykle, datumy_p = 0, 0, list()
+    for _, r in zapasy.iterrows():
+        if r["loser"] == meno:
+            sc = str(r.get("score", "")).upper()
+            if "RET" in sc or "W/O" in sc:
+                skrece += 1
+            wr = float(r.get("w_rank", 150)) if pd.notna(r.get("w_rank")) else 150
+
 
 
 
