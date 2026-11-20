@@ -29,44 +29,90 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("🎾 Tenis Pro Live")
-st.caption("Živý 6-pilierový model aktualizovaný v reálnom čase")
+st.title("🎾 Tenis Pro Live 2026")
+st.caption("Živý 6-pilierový model pre ATP, WTA & Challengers")
 
 okruh = st.radio("Kategória:", ("ATP (Muži)", "WTA (Ženy)"), horizontal=True)
 
-@st.cache_data(ttl=900)  # Obnovuje sa každých 15 minút!
+@st.cache_data(ttl=900)
 def nacitaj_zive_data(kategoria):
     tour = "atp" if "ATP" in kategoria else "wta"
     zaznamy = list()
     dnesne_zapasy = list()
+    posledny_rank = dict()
 
-    # 1. Stiahnutie aktuálnej sezóny 2026 (TML živá databáza pre ATP)
-    if tour == "atp":
+    # 1. Živá databáza TennisMyLife (2025 + 2026 + Challengers + prebiehajúce turnaje)
+    tml_base = "https://stats.tennismylife." + "org"
+    csv_odkazy = list()
+    try:
+        api_files = requests.get(f"{tml_base}/api/data-files", timeout=8).json()
+        for item in api_files:
+            nazov = str(item.get("name", "") if isinstance(item, dict) else item)
+            cesta = str(item.get("url", nazov) if isinstance(item, dict) else item)
+            if not cesta.startswith("http"):
+                cesta = f"{tml_base}/data/{cesta.lstrip('/')}"
+            if tour == "atp" and ("2025" in nazov or "2026" in nazov or "ongoing" in nazov.lower()):
+                if "wta" not in nazov.lower():
+                    csv_odkazy.append(cesta)
+            elif tour == "wta" and "wta" in nazov.lower() and ("2025" in nazov or "2026" in nazov or "ongoing" in nazov.lower()):
+                csv_odkazy.append(cesta)
+    except Exception:
+        pass
+
+    # Záložné priame odkazy na 2026 a prebiehajúce turnaje
+    if not csv_odkazy:
+        if tour == "atp":
+            csv_odkazy = [
+                f"{tml_base}/data/2025.csv",
+                f"{tml_base}/data/2026.csv",
+                f"{tml_base}/data/challenger_2026.csv",
+                f"{tml_base}/data/ongoing_tourneys.csv"
+            ]
+        else:
+            csv_odkazy = [
+                f"{tml_base}/data/wta_2025.csv",
+                f"{tml_base}/data/wta_2026.csv",
+                f"{tml_base}/data/wta_ongoing_tourneys.csv"
+            ]
+
+    for url in set(csv_odkazy):
         try:
-            url_2026 = "https://raw.githubusercontent." + "com/Tennismylife/TML-Database/master/2026.csv"
-            df_tml = pd.read_csv(url_2026, low_memory=False)
-            for _, r in df_tml.iterrows():
-                if pd.notna(r.get("winner_name")) and pd.notna(r.get("loser_name")):
+            df_part = pd.read_csv(url, low_memory=False)
+            for _, r in df_part.iterrows():
+                w = r.get("winner_name")
+                l = r.get("loser_name")
+                if pd.notna(w) and pd.notna(l):
                     zaznamy.append({
-                        "datum": str(r.get("tourney_date", "20260101")),
-                        "turnaj": str(r.get("tourney_name", "ATP")),
+                        "datum": str(r.get("tourney_date", "20260101")).replace(".0", ""),
+                        "turnaj": str(r.get("tourney_name", tour.upper())),
                         "surface": str(r.get("surface", "Hard")),
-                        "winner": str(r["winner_name"]).strip(),
-                        "loser": str(r["loser_name"]).strip(),
-                        "w_rank": r.get("winner_rank", 200),
-                        "l_rank": r.get("loser_rank", 200)
+                        "winner": str(w).strip(),
+                        "loser": str(l).strip(),
+                        "w_rank": r.get("winner_rank", 250),
+                        "l_rank": r.get("loser_rank", 250)
                     })
         except Exception:
             pass
 
-    # 2. Živý minútový feed z ESPN API (posledných 25 dní + dnešné a budúce zápasy)
-    dnes = datetime.utcnow()
-    start_dt = (dnes - timedelta(days=25)).strftime("%Y%m%d")
-    end_dt = (dnes + timedelta(days=2)).strftime("%Y%m%d")
-    espn_url = f"https://api.espn." + f"com/apis/site/v2/sports/tennis/{tour}/scoreboard?dates={start_dt}-{end_dt}"
-
+    # 2. Aktuálny rebríček z ESPN (zaručí prítomnosť všetkých top hráčov vrátane Alcaraza)
+    espn_base = "https://api.espn." + f"com/apis/site/v2/sports/tennis/{tour}"
     try:
-        resp = requests.get(espn_url, timeout=10).json()
+        rk_resp = requests.get(f"{espn_base}/rankings", timeout=8).json()
+        for rk_group in rk_resp.get("rankings", list()):
+            for entry in rk_group.get("ranks", list()):
+                meno = entry.get("athlete", {}).get("displayName", "")
+                poz = entry.get("current", 250)
+                if meno:
+                    posledny_rank[meno] = int(poz)
+    except Exception:
+        pass
+
+    # 3. Živý minútový feed z ESPN (posledných 20 dní + dnešné a zajtrajšie zápasy)
+    dnes = datetime.utcnow()
+    start_dt = (dnes - timedelta(days=20)).strftime("%Y%m%d")
+    end_dt = (dnes + timedelta(days=2)).strftime("%Y%m%d")
+    try:
+        resp = requests.get(f"{espn_base}/scoreboard?dates={start_dt}-{end_dt}", timeout=10).json()
         for event in resp.get("events", list()):
             turnaj_nazov = event.get("name", "Turnaj")
             for group in event.get("groupings", list()):
@@ -79,25 +125,22 @@ def nacitaj_zive_data(kategoria):
                     if len(hraci_comp) != 2:
                         continue
 
-                    p1_data, p2_data = hraci_comp[0], hraci_comp[1]
-                    meno1 = p1_data.get("athlete", {}).get("displayName", "")
-                    meno2 = p2_data.get("athlete", {}).get("displayName", "")
-                    rank1 = p1_data.get("curatedRank", {}).get("current", 200)
-                    rank2 = p2_data.get("curatedRank", {}).get("current", 200)
+                    p1_data, p2_data = hraci_comp
+                    meno1 = p1_data.get("athlete", {}).get("displayName", "").strip()
+                    meno2 = p2_data.get("athlete", {}).get("displayName", "").strip()
+                    rank1 = p1_data.get("curatedRank", {}).get("current", 250)
+                    rank2 = p2_data.get("curatedRank", {}).get("current", 250)
 
                     if not meno1 or not meno2:
                         continue
 
-                    # Ak zápas ešte neskončil (dnešný/nadchádzajúci), pridáme do klikateľného zoznamu
                     if "FINAL" not in status.upper():
                         dnesne_zapasy.append({
                             "popis": f"{meno1} vs. {meno2} ({turnaj_nazov})",
                             "h1": meno1,
-                            "h2": meno2,
-                            "turnaj": turnaj_nazov
+                            "h2": meno2
                         })
                     else:
-                        # Dohraný zápas pridáme do živých výsledkov
                         if p1_data.get("winner"):
                             w, l, wr, lr = meno1, meno2, rank1, rank2
                         else:
@@ -120,16 +163,14 @@ def nacitaj_zive_data(kategoria):
 
     df = df.drop_duplicates(subset=["datum", "winner", "loser"]).sort_values("datum").reset_index(drop=True)
 
-    # Výpočet aktuálneho Surface Elo zo sezóny 2026
     elo_surf = {"Hard": dict(), "Clay": dict(), "Grass": dict()}
-    posledny_rank = dict()
     K = 32
 
     for _, r in df.iterrows():
         w, l, s = r["winner"], r["loser"], r["surface"]
-        if pd.notna(r.get("w_rank")):
+        if pd.notna(r.get("w_rank")) and w not in posledny_rank:
             posledny_rank[w] = int(r["w_rank"])
-        if pd.notna(r.get("l_rank")):
+        if pd.notna(r.get("l_rank")) and l not in posledny_rank:
             posledny_rank[l] = int(r["l_rank"])
         if s not in elo_surf:
             s = "Hard"
@@ -140,10 +181,10 @@ def nacitaj_zive_data(kategoria):
         elo_surf[s][w] = rw + K * (1 - ew)
         elo_surf[s][l] = rl + K * (0 - (1 - ew))
 
-    vsetci_hraci = sorted(list(set(df["winner"]).union(set(df["loser"]))))
+    vsetci_hraci = sorted(list(set(df["winner"]).union(set(df["loser"])).union(set(posledny_rank.keys()))))
     return df, vsetci_hraci, elo_surf, posledny_rank, dnesne_zapasy
 
-with st.spinner("Sťahujem živé výsledky z posledných minút a sezónu 2026..."):
+with st.spinner("Sťahujem živé výsledky 2026 a dnešné zápasy..."):
     df, hraci, elo_surf, posledny_rank, dnesne_zapasy = nacitaj_zive_data(okruh)
 
 if df.empty:
@@ -151,13 +192,15 @@ if df.empty:
     st.stop()
 
 najnovsi_datum = str(df["datum"].max())
-st.success(f"🟢 Živé dáta aktívne | Najnovší zápas v systéme: **{najnovsi_datum[:4]}-{najnovsi_datum[4:6]}-{najnovsi_datum[6:]}** | Hráčov: **{len(hraci)}**")
+st.success(f"🟢 Živé dáta 2026 aktívne | Najnovší zápas: **{najnovsi_datum[:4]}-{najnovsi_datum[4:6]}-{najnovsi_datum[6:]}** | Hráčov: **{len(hraci)}**")
 
-# RÝCHLY VÝBER DNEŠNÉHO ZÁPASU JEDNÝM ŤUKNUTÍM
-predvoleny_i1, predvoleny_i2 = 0, 1
+# RÝCHLY VÝBER DNEŠNÉHO ZÁPASU
+predvoleny_i1 = hraci.index("Carlos Alcaraz") if "Carlos Alcaraz" in hraci else 0
+predvoleny_i2 = hraci.index("Flavio Cobolli") if "Flavio Cobolli" in hraci else (1 if len(hraci) > 1 else 0)
+
 if dnesne_zapasy:
     st.subheader("⚡ Dnešné / Najbližšie živé zápasy")
-    moznosti = ["— Vyber z dnešných zápasov alebo zvoľ ručne nižšie —"] + [z["popis"] for z in dnesne_zapasy]
+    moznosti = ["— Vyber z dnešných zápasov alebo zvoľ nižšie —"] + [z["popis"] for z in dnesne_zapasy]
     vybrany_zapas = st.selectbox("Ťukni na zápas:", moznosti)
     for z in dnesne_zapasy:
         if z["popis"] == vybrany_zapas:
@@ -201,66 +244,6 @@ def skore_formy(zapasy, meno):
     vahy = np.linspace(0.5, 1.5, len(zapasy))
     body = 0
     historia = list()
-    for (_, r), v in zip(zapasy.iterrows(), vahy):
-        if r["winner"] == meno:
-            body += v
-            historia.append("Z")
-        else:
-            historia.append("P")
-    return body / sum(vahy), historia
 
-f1, hist1 = skore_formy(z1, h1)
-f2, hist2 = skore_formy(z2, h2)
-p_forma1 = f1 / (f1 + f2) if (f1 + f2) > 0 else 0.5
-
-h2h = df[((df["winner"] == h1) & (df["loser"] == h2)) | ((df["winner"] == h2) & (df["loser"] == h1))]
-w_h2h_1 = len(h2h[h2h["winner"] == h1])
-w_h2h_2 = len(h2h[h2h["winner"] == h2])
-
-superi1 = set(z1["winner"]).union(set(z1["loser"])) - {h1}
-superi2 = set(z2["winner"]).union(set(z2["loser"])) - {h2}
-spolocni = list(superi1.intersection(superi2))
-
-spol_skore1, spol_skore2 = 0, 0
-for s_meno in spolocni:
-    spol_skore1 += len(z1[(z1["winner"] == h1) & (z1["loser"] == s_meno)])
-    spol_skore2 += len(z2[(z2["winner"] == h2) & (z2["loser"] == s_meno)])
-
-celk_h2h_1 = w_h2h_1 * 1.5 + spol_skore1 + 1
-celk_h2h_2 = w_h2h_2 * 1.5 + spol_skore2 + 1
-p_h2h1 = celk_h2h_1 / (celk_h2h_1 + celk_h2h_2)
-
-p_unava1 = (11 - unava_h1) / ((11 - unava_h1) + (11 - unava_h2))
-
-r1 = posledny_rank.get(h1, 200)
-r2 = posledny_rank.get(h2, 200)
-
-def index_motivacie(rank, historia, turnaj):
-    mot = 1.0
-    if rank > 100:
-        mot += 0.35
-    if historia[-3:].count("P") >= 2:
-        mot += 0.25
-    if rank <= 15 and turnaj != "Grand Slam / Masters / Finals":
-        mot -= 0.20
-    return max(0.3, mot)
-
-m1 = index_motivacie(r1, hist1, typ_turnaja)
-m2 = index_motivacie(r2, hist2, typ_turnaja)
-p_mot1 = m1 / (m1 + m2)
-
-p_dom1 = 0.65 if domaci == h1 else (0.35 if domaci == h2 else 0.50)
-
-sanca1 = (
-    0.25 * p_elo1 +
-    0.25 * p_forma1 +
-    0.15 * p_h2h1 +
-    0.15 * p_unava1 +
-    0.10 * p_mot1 +
-    0.10 * p_dom1
-)
-sanca2 = 1 - sanca1
-
-st.markdown("---")
 
 
